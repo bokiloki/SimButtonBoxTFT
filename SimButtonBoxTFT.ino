@@ -275,6 +275,7 @@ void displayButtons(int range)
 }
 void showCredits()
 {
+   controllers=3;
   tft.fillScreen(B);
   tft.setTextSize(8);
   for (int i = 0; i <= 160; i += 80)
