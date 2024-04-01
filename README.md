@@ -10,6 +10,6 @@ Using a Arduino Leonardo and a TFT touch Display I created a simple GUI to contr
 
 I hope someone finds it useful.
 
-Any comments are greatily apreciated.
+Any comments are greatly apreciated.
 
 BokiLoki
