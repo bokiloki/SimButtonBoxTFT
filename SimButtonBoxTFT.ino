@@ -1,292 +1,237 @@
+#include <Adafruit_GFX.h>
 #include <Adafruit_TFTLCD.h>
-#include <pin_magic.h>
-#include <registers.h>
-
+#include <Joystick.h>
 #include <TouchScreen.h>
 
-#include <Adafruit_GFX.h>
-#include <Adafruit_SPITFT.h>
-#include <Adafruit_SPITFT_Macros.h>
-#include <gfxfont.h>
+namespace Config {
+constexpr uint16_t displayDriver = 0x9341;
+constexpr int16_t touchMinX = 150, touchMaxX = 920;
+constexpr int16_t touchMinY = 120, touchMaxY = 940;
+constexpr int16_t pressureMin = 10, pressureMax = 1000;
+constexpr uint16_t axisRepeatMs = 90;
+constexpr uint8_t axisStep = 1;
+}
 
-#include <Joystick.h>
+namespace Color {
+constexpr uint16_t background = 0xF800;
+constexpr uint16_t idle = 0xFBE0;
+constexpr uint16_t pressed = 0x07E0;
+constexpr uint16_t text = 0x0000;
+constexpr uint16_t border = 0xFFFF;
+}
 
+constexpr int16_t screenWidth = 240, screenHeight = 320;
+constexpr int16_t tabHeight = 80, cellSize = 60;
 
-#if defined(__SAM3X8E__)
-#undef __FlashStringHelper::F(string_literal)
-#define F(string_literal) string_literal
-#endif
-
-
-
-TouchScreen ts = TouchScreen(6, A1, A2, 7, 274);
-
-#define  B   0xF800
-
-#define G   0x07E0
-
-#define W  0xFFFF
-
-#define R   0xFBE0
-
-Joystick_ Joystick;
-
+TouchScreen touchScreen(6, A1, A2, 7, 274);
 Adafruit_TFTLCD tft(A3, A2, A1, A0, A4);
+Joystick_ joystick;
+
+enum Page : uint8_t { BUTTONS_A, BUTTONS_B, AXES, CREDITS };
+Page page = BUTTONS_A;
+int8_t activeButton = -1;
+int8_t activeAxisControl = -1;
+bool touchWasDown = false;
+uint32_t lastAxisChange = 0;
+// Preserve the original startup behavior: every HID axis begins at zero.
+uint8_t axisValues[7] = {0, 0, 0, 0, 0, 0, 0};
+
+const char *const tabs[] = {"A", "B", "C"};
+const char *const axisNames[] = {"Rx", "Ry", "Rz", "X", "Y", "Z", "THR"};
+
+void drawPage();
+void drawTabs();
+void drawButtonPage();
+void drawAxesPage();
+void drawAxis(uint8_t axis);
+void drawCredits();
+void scanTouch();
+void releaseButton();
+void changeAxis(uint8_t axis, int8_t direction);
+void sendAxes();
+
 void setup() {
-  tft.reset();
-  uint16_t identifier = 0x9341;
-  tft.begin(identifier);
-  Joystick.begin();
   Serial.begin(115200);
-  Joystick.setRxAxisRange(0, 100);
-  Joystick.setRyAxisRange(0, 100);
-  Joystick.setRzAxisRange(0, 100);
-  Joystick.setXAxisRange(0, 100);
-  Joystick.setYAxisRange(0, 100);
-  Joystick.setZAxisRange(0, 100);
-  Joystick.setThrottleRange(0, 100);
-  Joystick.setRxAxis(0);
-  Joystick.setRyAxis(0);
-  Joystick.setRzAxis(0);
-  Joystick.setXAxis(0);
-  Joystick.setYAxis(0);
-  Joystick.setZAxis(0);
-  Joystick.setThrottle(0);
-  displayButtons(0);
+  tft.reset();
+  tft.begin(Config::displayDriver);
+  tft.setRotation(0);
+  tft.setTextColor(Color::text);
+  tft.setTextWrap(true);
+
+  joystick.setRxAxisRange(0, 100);
+  joystick.setRyAxisRange(0, 100);
+  joystick.setRzAxisRange(0, 100);
+  joystick.setXAxisRange(0, 100);
+  joystick.setYAxisRange(0, 100);
+  joystick.setZAxisRange(0, 100);
+  joystick.setThrottleRange(0, 100);
+  joystick.begin();
+  sendAxes();
+  drawPage();
 }
-#define mi 10
-#define ma 1000
-int controllers = 0;
-void loop() {
-  touch();
-}
-int buttons[48] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
-int lengthXrYrZrXYZTh[8] = {0, 0, 0, 0, 0, 0, 0,50};
-char charji[3] = {'A', 'B', 'C'};
-String buttonstext[48] = {"01", "02", "03", "04", "05", "06", "07", "08", "09", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27", "28", "29", "30", "31", "32", "-", "+", "-", "+", "-", "+", "-", "+", "-", "+", "-", "+", "-", "+", "B", "C"};
-void touch()
-{
-  digitalWrite(13, HIGH);
-  TSPoint p = ts.getPoint();
-  delay(10);
-  digitalWrite(13, LOW);
+
+void loop() { scanTouch(); }
+
+void scanTouch() {
+  TSPoint point = touchScreen.getPoint();
+  // Display and touch share these pins; restore them after each touch read.
   pinMode(A2, OUTPUT);
   pinMode(A1, OUTPUT);
-  int lastpz = p.z;
-  if (p.z > mi && p.z < ma)
-  {
 
-    p.x = tft.width() - (map(p.x, 150, 920, tft.width(), 0));
-    p.y = tft.height() - (map(p.y, 120, 940, tft.height(), 0));
-    //
-    if (p.y < 80 && p.y > 0)
-    {
-      for (int i = 0; i <= 160; i += 80)
-      {
-        if ((p.x < i + 80 && p.x > i))
-        {
-          displayButtons(i / 80 * 16);
-        }
-      }
-    }
-    else if (controllers == 0 || controllers == 1)
-    {
-      for (int i = 80, buttoncounter = controllers * 16; i <= 260; i += 60, buttoncounter++)
-      {
-        for (int j = 0; j < 240; j += 60, buttoncounter++)
-        {
-
-          if ((p.x < j + 60 && p.x > j) && (p.y < i + 60 && p.y > i))
-          {
-            if (buttons[buttoncounter] == 0)
-            {
-              tft.fillRect(j + 1, i + 1, 58, 58, G);
-              Joystick.setButton(buttoncounter, 1);
-              buttons[buttoncounter] = 1;
-              int count = 0;
-              int lastpzavg = lastpz;
-              while (lastpzavg != 0)
-              {
-                if (count < 10) {
-                  p = ts.getPoint();
-                  delay(10);
-                  lastpz += p.z;
-                  count++;
-                }
-                else {
-                  lastpzavg = lastpz / count;
-                  count = 0;
-                  lastpz = 0;
-                }
-
-              }
-              Joystick.setButton(buttoncounter, 0);
-            }
-
-
-
-          }
-
-
-
-        } buttoncounter--;
-      }
-    }
-    else if (controllers == 2)
-    {
-      for (int i = 80, buttoncounter = 0; i <= 260; i += 60, buttoncounter++)
-      {
-        for (int j = 0; j < 240; j += 60, buttoncounter++)
-        {
-
-          if ((p.x < j + 60 && p.x > j) && (p.y < i + 60 && p.y > i))
-          {
-            if (lengthXrYrZrXYZTh[buttoncounter / 2] > 0 && buttoncounter % 2 == 0)
-            {
-              //tft.drawLine(lengthXrYrZrXYZTh[buttoncounter / 2]  + (buttoncounter / 2 % 2 * 119), i + 1, lengthXrYrZrXYZTh[buttoncounter / 2] + (buttoncounter / 2 % 2 * 119), i + 58, B);
-             if (buttoncounter/2==7)
-              {
-                showCredits();
-              }
-              else {
-                tft.setCursor(j + 36, i + 20);
-                tft.fillRect(j + 32 , i + 1, 30, 58, B);
-                tft.fillRect(j + 40, i + 1, 30, 58, B);
-                tft.fillRect(j + 62, i + 1, 30, 58, B);
-                lengthXrYrZrXYZTh[buttoncounter / 2]--;
-                tft.println(lengthXrYrZrXYZTh[buttoncounter / 2] );
-              }
-            }
-            else if (lengthXrYrZrXYZTh[buttoncounter / 2] < 100 && buttoncounter % 2 == 1)
-            {
-              //tft.drawLine(lengthXrYrZrXYZTh[buttoncounter / 2] + 1 + (buttoncounter / 2 % 2 * 119), i + 1, lengthXrYrZrXYZTh[buttoncounter / 2] + (buttoncounter / 2 % 2 * 119) + 1, i + 58, G);
-            if (buttoncounter/2==7)
-              {
-                showCredits();
-              }
-              else
-              {
-                tft.setCursor(j - 24, i + 20);
-                tft.fillRect(j + 2 , i + 1, 30, 58, B);
-                tft.fillRect(j - 8, i + 1, 30, 58, B);
-                tft.fillRect(j - 28, i + 1, 30, 58, B);
-                lengthXrYrZrXYZTh[buttoncounter / 2]++;
-                tft.println(lengthXrYrZrXYZTh[buttoncounter / 2] );
-              }
-            }
-
-
-          }
-
-
-        } buttoncounter--;
-
-        Joystick.setRxAxis(lengthXrYrZrXYZTh[0]);
-        Joystick.setRyAxis(lengthXrYrZrXYZTh[1]);
-        Joystick.setRzAxis(lengthXrYrZrXYZTh[2]);
-        Joystick.setXAxis(lengthXrYrZrXYZTh[3]);
-        Joystick.setYAxis(lengthXrYrZrXYZTh[4]);
-        Joystick.setZAxis(lengthXrYrZrXYZTh[5]);
-        Joystick.setThrottle(lengthXrYrZrXYZTh[6]);
-
-      }
-      /* for (int i = 80, buttoncounter = 32; i <= 260; i += 60, buttoncounter += 2)
-        {
-        for (int j = 0, counterleftright = 0; j <= 120; j += 120, buttoncounter += 2, counterleftright++)
-        {
-         tft.setCursor(j + 24, i + 20);
-         tft.println(buttonstext[buttoncounter] );
-         tft.setCursor(j + 84, i + 20);
-         tft.println(buttonstext[buttoncounter + 1] );
-        }
-        buttoncounter -= 2;
-        }*/
-    }
+  const bool down = point.z > Config::pressureMin && point.z < Config::pressureMax;
+  if (!down) {
+    releaseButton();
+    activeAxisControl = -1;
+    touchWasDown = false;
+    return;
   }
-  else if (controllers == 0 || controllers == 1)
-  {
-    for (int i = 80, buttoncounter = controllers * 16; i <= 260; i += 60, buttoncounter++)
-    {
-      for (int j = 0; j < 240; j += 60, buttoncounter++)
-      {
-        if (buttons[buttoncounter] == 1)
-        {
-          tft.fillRect(j + 1, i + 1, 58, 58, R);
-          tft.setCursor(j + 14, i + 20);
-          tft.println(buttonstext[buttoncounter] );
-          Joystick.setButton(buttoncounter, 0);
-          buttons[buttoncounter] = 0;
-        }
-      } buttoncounter--;
+
+  if (touchWasDown) {
+    if (page == AXES && activeAxisControl >= 0 &&
+        millis() - lastAxisChange >= Config::axisRepeatMs) {
+      changeAxis(activeAxisControl / 2, activeAxisControl % 2 ? 1 : -1);
+      lastAxisChange = millis();
     }
+    return;
+  }
+
+  touchWasDown = true;
+  int16_t x = screenWidth - map(point.x, Config::touchMinX, Config::touchMaxX,
+                                screenWidth, 0);
+  int16_t y = screenHeight - map(point.y, Config::touchMinY, Config::touchMaxY,
+                                 screenHeight, 0);
+  x = constrain(x, 0, screenWidth - 1);
+  y = constrain(y, 0, screenHeight - 1);
+
+  if (y < tabHeight) {
+    releaseButton();
+    page = static_cast<Page>(x / 80);
+    drawPage();
+    return;
+  }
+
+  const uint8_t row = (y - tabHeight) / cellSize;
+  if (row >= 4) return;
+
+  if (page == BUTTONS_A || page == BUTTONS_B) {
+    const uint8_t column = x / cellSize;
+    const uint8_t offset = page == BUTTONS_B ? 16 : 0;
+    activeButton = offset + row * 4 + column;
+    joystick.setButton(activeButton, 1);
+    tft.fillRect(column * cellSize + 1, tabHeight + row * cellSize + 1,
+                 58, 58, Color::pressed);
+    tft.setTextSize(3);
+    tft.setCursor(column * cellSize + 13, tabHeight + row * cellSize + 20);
+    if (activeButton + 1 < 10) tft.print('0');
+    tft.print(activeButton + 1);
+  } else if (page == AXES) {
+    const uint8_t control = row * 2 + x / 120;
+    if (control == 7) {
+      page = CREDITS;
+      drawPage();
+      return;
+    }
+    const bool plus = x % 120 >= 60;
+    activeAxisControl = control * 2 + (plus ? 1 : 0);
+    changeAxis(control, plus ? 1 : -1);
+    lastAxisChange = millis();
   }
 }
-void displayButtons(int range)
-{ tft.fillScreen(B);
+
+void releaseButton() {
+  if (activeButton < 0) return;
+  joystick.setButton(activeButton, 0);
+  activeButton = -1;
+  if (page == BUTTONS_A || page == BUTTONS_B) drawButtonPage();
+}
+
+void changeAxis(uint8_t axis, int8_t direction) {
+  if (axis >= 7) return;
+  axisValues[axis] = constrain(
+      static_cast<int16_t>(axisValues[axis]) + direction * Config::axisStep,
+      0, 100);
+  sendAxes();
+  drawAxis(axis);
+}
+
+void sendAxes() {
+  joystick.setRxAxis(axisValues[0]);
+  joystick.setRyAxis(axisValues[1]);
+  joystick.setRzAxis(axisValues[2]);
+  joystick.setXAxis(axisValues[3]);
+  joystick.setYAxis(axisValues[4]);
+  joystick.setZAxis(axisValues[5]);
+  joystick.setThrottle(axisValues[6]);
+}
+
+void drawPage() {
+  tft.fillScreen(Color::background);
+  drawTabs();
+  if (page == BUTTONS_A || page == BUTTONS_B) drawButtonPage();
+  else if (page == AXES) drawAxesPage();
+  else drawCredits();
+}
+
+void drawTabs() {
   tft.setTextSize(8);
-  for (int i = 0; i <= 160; i += 80)
-  {
-    tft.fillRect(i, 4, 78, 76, R);
-    tft.setCursor(i + 20, 12);
-    tft.println(charji[i / 80]);
+  for (uint8_t i = 0; i < 3; ++i) {
+    tft.fillRect(i * 80, 4, 78, 76, page == i ? Color::pressed : Color::idle);
+    tft.setCursor(i * 80 + 20, 12);
+    tft.print(tabs[i]);
   }
-  controllers = range / 16;
+}
+
+void drawButtonPage() {
+  const uint8_t offset = page == BUTTONS_B ? 16 : 0;
   tft.setTextSize(3);
-  if (controllers == 0 || controllers == 1)
-  {
-    for (int i = 80, buttoncounter = range; i <= 260; i += 60, buttoncounter++)
-    {
-      for (int j = 0; j < 240; j += 60, buttoncounter++)
-      {
-        tft.fillRect(j + 1, i + 1, 58, 58, R);
-        tft.setCursor(j + 14, i + 20);
-        tft.println(buttonstext[buttoncounter] );
-        buttons[buttoncounter] = 0;
-        Joystick.setButton(buttoncounter, 0);
-      }
-      buttoncounter--;
-    }
-  }
-  else if (controllers == 2)
-  {
-    for (int i = 80, buttoncounter = range; i <= 260; i += 60, buttoncounter += 2)
-    {
-      for (int j = 0, counterleftright = 0; j <= 120; j += 120, buttoncounter += 2, counterleftright++)
-      {
-        tft.drawRect(j - counterleftright , i, 119, 60, R);
-        tft.setCursor(j + 14, i + 20);
-        tft.println(buttonstext[buttoncounter] );
-        tft.setCursor(j + 36, i + 20);
-        if (i == 260 && j == 120)
-        {
-        }
-        else
-        {
-          tft.println(lengthXrYrZrXYZTh[(buttoncounter - range) / 2] );
-        }
-        tft.setCursor(j + 94, i + 20);
-        tft.println(buttonstext[buttoncounter + 1] );
-        buttons[buttoncounter] = 0;
-        Joystick.setButton(buttoncounter, 0);
-      }
-      buttoncounter -= 2;
+  for (uint8_t row = 0; row < 4; ++row) {
+    for (uint8_t column = 0; column < 4; ++column) {
+      const uint8_t button = offset + row * 4 + column;
+      const int16_t x = column * cellSize, y = tabHeight + row * cellSize;
+      tft.fillRect(x + 1, y + 1, 58, 58, Color::idle);
+      tft.setCursor(x + 13, y + 20);
+      if (button + 1 < 10) tft.print('0');
+      tft.print(button + 1);
     }
   }
 }
-void showCredits()
-{
-   controllers=3;
-  tft.fillScreen(B);
-  tft.setTextSize(8);
-  for (int i = 0; i <= 160; i += 80)
-  {
-    tft.fillRect(i, 4, 78, 76, R);
-    tft.setCursor(i + 20, 12);
-    tft.println(charji[i / 80]);
-  }
+
+void drawAxesPage() {
+  for (uint8_t axis = 0; axis < 7; ++axis) drawAxis(axis);
+  tft.drawRect(119, 259, 120, 60, Color::border);
   tft.setTextSize(2);
-  tft.setCursor(0, 100);
-  tft.println("This porject was created and is maintained by Bostjan Cegovnik aka bokiloki.");
-  tft.setCursor(0, 200);
-  tft.println("Any suggestions and bugs can be reported in the github repository.");
+  tft.setCursor(139, 280);
+  tft.print("ABOUT");
+}
+
+void drawAxis(uint8_t axis) {
+  const int16_t x = (axis % 2) * 120;
+  const int16_t y = tabHeight + (axis / 2) * cellSize;
+  tft.fillRect(x, y, 120, 60, Color::background);
+  tft.drawRect(x, y, 120, 60, Color::border);
+  tft.setTextSize(2);
+  tft.setCursor(x + 4, y + 4);
+  tft.print(axisNames[axis]);
+  tft.setTextSize(3);
+  tft.setCursor(x + 8, y + 27);
+  tft.print('-');
+  tft.setCursor(x + 42, y + 27);
+  if (axisValues[axis] < 100) tft.print(' ');
+  if (axisValues[axis] < 10) tft.print(' ');
+  tft.print(axisValues[axis]);
+  tft.setCursor(x + 96, y + 27);
+  tft.print('+');
+}
+
+void drawCredits() {
+  tft.setTextSize(2);
+  tft.setCursor(8, 100);
+  tft.println("SimButtonBoxTFT");
+  tft.println();
+  tft.println("Created and maintained by");
+  tft.println("Bostjan Cegovnik (bokiloki).");
+  tft.println();
+  tft.println("Suggestions and bug reports:");
+  tft.println("github.com/bokiloki/");
+  tft.println("SimButtonBoxTFT");
 }
