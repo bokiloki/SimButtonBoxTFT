@@ -1,0 +1,10 @@
+build/
+*.elf
+*.hex
+*.bin
+*.map
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+.DS_Store
