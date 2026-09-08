@@ -1,77 +1,99 @@
-It implements a touchscreen-driven USB joystick interface on an Arduino with a TFT display.
-Summary of operation:
+# SimButtonBoxTFT
 
-Core Function
+A touchscreen USB button box for simulators, built with an Arduino-compatible
+native-USB board and a 2.4-inch ILI9341 resistive TFT shield.
 
-Initializes an Adafruit 2.4″ TFT LCD (ILI9341 controller assumed) and a resistive touchscreen.
+It appears on the computer as a standard USB HID joystick and provides 32
+momentary buttons plus seven adjustable axes from a 240x320 touchscreen.
 
-Initializes the Joystick library so the Arduino enumerates as a USB HID joystick.
+## Features
 
-Displays multiple button pages (labeled A, B, C) on the TFT.
+- 32 joystick buttons across two 4x4 pages
+- Rx, Ry, Rz, X, Y, Z, and throttle controls (0-100)
+- Press-and-hold axis adjustment
+- Immediate visual feedback for button presses
+- Non-blocking touch handling for reliable HID button releases
+- Centralized touch calibration and behavior settings
 
-When you tap areas of the touchscreen, it:
+## Hardware
 
-Lights up the corresponding button on screen.
+- Arduino Leonardo, Micro, or another ATmega32U4 board with native USB HID
+- 2.4-inch 240x320 ILI9341 TFT shield with a resistive touchscreen
+- USB data cable
 
-Sends a Joystick.setButton(n,1) signal for that virtual button.
+An Arduino Uno does not provide native USB HID with this sketch. The shield may
+physically fit an Uno, but use a Leonardo-compatible pin layout or adapt the
+constructor pins in `SimButtonBoxTFT.ino`.
 
-Waits until touch ends, then releases it (setButton(n,0)).
+## Required Arduino libraries
 
-Display Pages
+Install these through **Tools > Manage Libraries** in Arduino IDE:
 
-Page A and B:
+1. **Adafruit GFX Library** by Adafruit
+2. **Adafruit TFTLCD Library** by Adafruit
+3. **TouchScreen** by Adafruit
+4. **Joystick Library** by Matthew Heironimus
 
-Each shows 16 on-screen buttons (grid of 4×4).
+The final dependency is
+[MHeironimus/ArduinoJoystickLibrary](https://github.com/MHeironimus/ArduinoJoystickLibrary),
+not a similarly named package.
 
-Touch toggles a joystick button on/off (visual color change from red → green → red).
+## Build and upload
 
-These map to joystick button IDs 0–31.
+1. Clone or download this repository.
+2. Open `SimButtonBoxTFT.ino` in Arduino IDE.
+3. Select the native-USB board and its serial port.
+4. Install the required libraries and upload the sketch.
+5. On Windows, open **Set up USB game controllers** to verify the inputs before
+   assigning them in a simulator.
 
-Page C:
+## Controls
 
-Controls joystick analog axes (Rx, Ry, Rz, X, Y, Z, Throttle).
+| Page | Controls | USB mapping |
+| --- | --- | --- |
+| A | Buttons 01-16 | HID buttons 1-16 |
+| B | Buttons 17-32 | HID buttons 17-32 |
+| C | Seven `-` / `+` controls | Rx, Ry, Rz, X, Y, Z, throttle |
 
-Each pair of “–” and “+” buttons decreases/increases an axis value (range 0–100).
+Tap **ABOUT** at the lower-right of page C for project information. Use any tab
+to leave that screen.
 
-Updates joystick axes in real time.
+## Touch calibration
 
-Hidden action:
+If touches are mirrored or offset, adjust the four constants in the `Config`
+namespace near the top of the sketch:
 
-When the last “+”/“–” pair (for throttle) is pressed, it calls showCredits(), which shows project info text.
+```cpp
+constexpr int16_t touchMinX = 150, touchMaxX = 920;
+constexpr int16_t touchMinY = 120, touchMaxY = 940;
+```
 
-Visual Feedback (simplified schematic)
------------------------------
-| A | B | C |   <-- top menu
------------------------------
-| Btn01 | Btn02 | ... | Btn04 |
-| Btn05 | Btn06 | ... | Btn08 |
-| Btn09 | Btn10 | ... | Btn12 |
-| Btn13 | Btn14 | ... | Btn16 |
------------------------------
-Touch => color change => Joystick button press
+Settings for touch pressure, axis repeat speed, axis step size, and colors are
+also grouped near the top of the sketch.
 
-Functional Flow
-setup():
-  init TFT and touchscreen
-  init Joystick (axis ranges 0–100)
-  draw page A buttons
+## Troubleshooting
 
-loop():
-  call touch() continuously
-  → detect pressure on screen
-  → map touch X/Y to display coordinates
-  → trigger corresponding button or axis control
+- **No joystick appears:** confirm the board supports native USB and install the
+  MHeironimus Joystick library.
+- **White screen:** verify that the TFT uses ILI9341 controller ID `0x9341`.
+- **Touch is offset:** recalibrate the four touch limits.
+- **Upload port disappears:** double-tap reset on a Leonardo/Micro, select the
+  temporary bootloader port, and upload again.
 
-Purpose
+## Project photos
 
-It effectively turns the TFT touch display into a programmable joystick panel with:
+![Button page](IMG_20190125_133329.png)
 
-32 digital buttons (pages A, B)
+![Second button page](IMG_20190125_133338.png)
 
-7 analog axes (page C)
+![Axis page](IMG_20190125_133355.png)
 
-Visual confirmation of button state
+![Project information](IMG_20190125_133408.png)
 
-Typical Use
+## License
 
-Used for simulator control panels, game controller prototypes, or custom HMI for robotics where a resistive touchscreen substitutes physical buttons and knobs.
+No license has been selected yet. Until one is added, standard copyright rules
+apply. Add an open-source license if you want others to reuse and contribute.
+
+Bug reports and ideas are welcome through
+[GitHub Issues](https://github.com/bokiloki/SimButtonBoxTFT/issues).
